@@ -1,7 +1,7 @@
 import psycopg2
 from psycopg2 import sql
 from tabulate import tabulate
-from datetime import datetime, timedelta
+from datetime import datetime
 import pytz
 
 # Replace these with your PostgreSQL connection details
@@ -43,41 +43,27 @@ values = [
 # Insert data into the "vacay" table with manual Wollongong Time entry
 insert_data_query = """
 INSERT INTO "vacay" ("Day", "Wollongong Time", "Activity")
-VALUES (%s, %s::timestamptz, %s);
+VALUES (%s, %s::timestamptz, %s)
+RETURNING "Wollongong Time";  -- Return the inserted Wollongong Time
 """
-
-# Function to convert time zones
-convert_timezones_function = """
-CREATE OR REPLACE FUNCTION convert_timezones(
-    input_timestamp TIMESTAMPTZ
-) RETURNS TABLE (
-    wollongong_time TIMESTAMPTZ,
-    la_time TIMESTAMPTZ,
-    ny_orlando_time TIMESTAMPTZ
-) AS $$
-BEGIN
-    wollongong_time := input_timestamp AT TIME ZONE 'Australia/Sydney';
-    la_time := input_timestamp AT TIME ZONE 'America/Los_Angeles';
-    ny_orlando_time := input_timestamp AT TIME ZONE 'America/New_York';
-END;
-$$ LANGUAGE plpgsql;
-"""
-
-cursor.execute(convert_timezones_function)
 
 # Execute the insert statement for each row
 for row in values:
-    day, wollongong_time_str, activity = row
+    day, _, activity = row
+    wollongong_time_str = input(f"Enter Wollongong Time for {day} in the format 'YYYY-MM-DD HH:MM AM/PM': ")
     cursor.execute(insert_data_query, (day, wollongong_time_str, activity))
+    inserted_wollongong_time = cursor.fetchone()[0]
 
-# Update LA Time and NY/Orlando Time based on Wollongong Time using a subquery
-update_query = """
-UPDATE "vacay"
-SET "LA Time" = (SELECT la_time FROM convert_timezones("Wollongong Time")),
-    "NY/Orlando Time" = (SELECT ny_orlando_time FROM convert_timezones("Wollongong Time"));
-"""
+    # Update LA Time and NY/Orlando Time based on the manually entered Wollongong Time
+    update_query = """
+    UPDATE "vacay"
+    SET
+        "LA Time" = %s::timestamptz AT TIME ZONE 'America/Los_Angeles',
+        "NY/Orlando Time" = %s::timestamptz AT TIME ZONE 'America/New_York'
+    WHERE "Wollongong Time" = %s::timestamptz;
+    """
+    cursor.execute(update_query, (inserted_wollongong_time, inserted_wollongong_time, inserted_wollongong_time))
 
-cursor.execute(update_query)
 conn.commit()
 
 # Select all data from the "vacay" table
